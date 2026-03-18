@@ -348,7 +348,7 @@ func (r *NotificationRepository) scanNotification(row pgx.Row) (*domain.Notifica
 		n.LastError = *lastError
 	}
 	if len(templateVarsJSON) > 0 {
-		json.Unmarshal(templateVarsJSON, &n.TemplateVars)
+		_ = json.Unmarshal(templateVarsJSON, &n.TemplateVars)
 	}
 	return &n, nil
 }
@@ -378,7 +378,7 @@ func (r *NotificationRepository) scanNotificationFromRows(rows pgx.Rows) (*domai
 		n.LastError = *lastError
 	}
 	if len(templateVarsJSON) > 0 {
-		json.Unmarshal(templateVarsJSON, &n.TemplateVars)
+		_ = json.Unmarshal(templateVarsJSON, &n.TemplateVars)
 	}
 	return &n, nil
 }

@@ -52,7 +52,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("setting up tracing: %w", err)
 	}
-	defer shutdownTracing(context.Background())
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	// Connect to Postgres
 	poolCfg, err := pgxpool.ParseConfig(cfg.Postgres.DSN)
@@ -86,7 +86,7 @@ func run(logger *slog.Logger) error {
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
 	})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("connecting to redis: %w", err)
@@ -185,7 +185,7 @@ func runMigrations(dsn string) error {
 	if err != nil {
 		return fmt.Errorf("creating migrator: %w", err)
 	}
-	defer m.Close()
+	defer func() { _, _ = m.Close() }()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("applying migrations: %w", err)
