@@ -1,0 +1,562 @@
+openapi: 3.0.3
+info:
+  title: Notification Service API
+  description: Event-driven notification system supporting SMS, Email, and Push channels.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+
+paths:
+  /health:
+    get:
+      summary: Liveness check
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /ready:
+    get:
+      summary: Readiness check
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  checks:
+                    type: object
+                    properties:
+                      postgres:
+                        type: string
+                      redis:
+                        type: string
+        '503':
+          description: Service is not ready
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      tags: [Observability]
+      responses:
+        '200':
+          description: Prometheus metrics in text format
+
+  /api/v1/notifications:
+    post:
+      summary: Create a notification
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+      responses:
+        '201':
+          description: Notification created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Idempotency conflict
+    get:
+      summary: List notifications with filters and cursor pagination
+      tags: [Notifications]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/Status'
+        - name: channel
+          in: query
+          schema:
+            $ref: '#/components/schemas/Channel'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: cursor_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: cursor_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationList'
+
+  /api/v1/notifications/batch:
+    post:
+      summary: Create a batch of notifications (up to 1000)
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateRequest'
+      responses:
+        '201':
+          description: Batch created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  count:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/notifications/{id}:
+    get:
+      summary: Get notification by ID
+      tags: [Notifications]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/notifications/{id}/cancel:
+    post:
+      summary: Cancel a pending notification
+      tags: [Notifications]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification cancelled
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Cannot cancel notification in current status
+
+  /api/v1/notifications/{id}/attempts:
+    get:
+      summary: Get delivery attempts for a notification
+      tags: [Notifications]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Delivery attempts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attempts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeliveryAttempt'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/notifications/batch/{batchId}:
+    get:
+      summary: List notifications by batch ID
+      tags: [Notifications]
+      parameters:
+        - name: batchId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Batch notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationList'
+
+  /api/v1/templates:
+    post:
+      summary: Create a template
+      tags: [Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Duplicate template name
+    get:
+      summary: List all templates
+      tags: [Templates]
+      responses:
+        '200':
+          description: Templates list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Template'
+
+  /api/v1/templates/{id}:
+    get:
+      summary: Get template by ID
+      tags: [Templates]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Template found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update a template
+      tags: [Templates]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete a template
+      tags: [Templates]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Template deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /ws/notifications/{id}:
+    get:
+      summary: WebSocket for real-time notification status updates
+      tags: [WebSocket]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '101':
+          description: WebSocket connection established
+
+components:
+  schemas:
+    Channel:
+      type: string
+      enum: [sms, email, push]
+
+    Priority:
+      type: string
+      enum: [high, normal, low]
+
+    Status:
+      type: string
+      enum: [pending, scheduled, queued, processing, delivered, failed, cancelled]
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+        batch_id:
+          type: string
+          format: uuid
+        channel:
+          $ref: '#/components/schemas/Channel'
+        priority:
+          $ref: '#/components/schemas/Priority'
+        recipient:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+        template_id:
+          type: string
+          format: uuid
+        template_vars:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          $ref: '#/components/schemas/Status'
+        scheduled_at:
+          type: string
+          format: date-time
+        attempt_count:
+          type: integer
+        max_retries:
+          type: integer
+        last_error:
+          type: string
+        delivered_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateNotificationRequest:
+      type: object
+      required: [channel, priority, recipient]
+      properties:
+        idempotency_key:
+          type: string
+          maxLength: 255
+        channel:
+          $ref: '#/components/schemas/Channel'
+        priority:
+          $ref: '#/components/schemas/Priority'
+        recipient:
+          type: string
+          maxLength: 500
+        subject:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          maxLength: 10000
+        template_id:
+          type: string
+          format: uuid
+        template_vars:
+          type: object
+          additionalProperties:
+            type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 10
+
+    BatchCreateRequest:
+      type: object
+      required: [notifications]
+      properties:
+        notifications:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateNotificationRequest'
+          minItems: 1
+          maxItems: 1000
+
+    NotificationList:
+      type: object
+      properties:
+        notifications:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        next_cursor:
+          type: object
+          properties:
+            created_at:
+              type: string
+              format: date-time
+            id:
+              type: string
+              format: uuid
+
+    DeliveryAttempt:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        notification_id:
+          type: string
+          format: uuid
+        attempt_number:
+          type: integer
+        status_code:
+          type: integer
+        response_body:
+          type: string
+        error:
+          type: string
+        duration_ms:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        subject:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTemplateRequest:
+      type: object
+      required: [name, channel, body]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        channel:
+          $ref: '#/components/schemas/Channel'
+        subject:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          maxLength: 50000
+
+    UpdateTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        channel:
+          $ref: '#/components/schemas/Channel'
+        subject:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          maxLength: 50000
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
