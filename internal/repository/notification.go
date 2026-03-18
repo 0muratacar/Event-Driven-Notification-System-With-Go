@@ -66,7 +66,7 @@ func (r *NotificationRepository) CreateBatch(ctx context.Context, notifications 
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	now := time.Now().UTC()
 	for _, n := range notifications {

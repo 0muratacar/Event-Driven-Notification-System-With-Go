@@ -203,7 +203,9 @@ func (s *NotificationService) CreateBatch(ctx context.Context, req domain.BatchC
 				if err := s.producer.Enqueue(ctx, n.ID, n.Channel, n.Priority); err != nil {
 					s.logger.Error("failed to enqueue batch notification", "id", n.ID, "error", err)
 				} else {
-					s.repo.UpdateStatus(ctx, n.ID, domain.StatusQueued, "")
+					if err := s.repo.UpdateStatus(ctx, n.ID, domain.StatusQueued, ""); err != nil {
+						s.logger.Error("failed to update status to queued", "id", n.ID, "error", err)
+					}
 					n.Status = domain.StatusQueued
 				}
 			}

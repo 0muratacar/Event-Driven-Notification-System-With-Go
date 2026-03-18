@@ -105,7 +105,9 @@ func (d *Dispatcher) processMessage(ctx context.Context, logger *slog.Logger, ms
 	notificationID, err := uuid.Parse(msg.NotificationID)
 	if err != nil {
 		logger.Error("invalid notification ID", "id", msg.NotificationID, "error", err)
-		d.consumer.Ack(ctx, msg.StreamID, msg.MessageID)
+		if err := d.consumer.Ack(ctx, msg.StreamID, msg.MessageID); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
@@ -134,25 +136,35 @@ func (d *Dispatcher) processMessage(ctx context.Context, logger *slog.Logger, ms
 	n, err := d.repo.GetByID(ctx, notificationID)
 	if err != nil {
 		logger.Error("fetching notification", "error", err)
-		d.consumer.Ack(ctx, msg.StreamID, msg.MessageID)
+		if err := d.consumer.Ack(ctx, msg.StreamID, msg.MessageID); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
 	// Skip if already delivered, cancelled, or failed
 	if n.Status == domain.StatusDelivered || n.Status == domain.StatusCancelled || n.Status == domain.StatusFailed {
-		d.consumer.Ack(ctx, msg.StreamID, msg.MessageID)
+		if err := d.consumer.Ack(ctx, msg.StreamID, msg.MessageID); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
 	// Update status to processing
-	d.repo.UpdateStatus(ctx, n.ID, domain.StatusProcessing, "")
+	if err := d.repo.UpdateStatus(ctx, n.ID, domain.StatusProcessing, ""); err != nil {
+		logger.Error("failed to update status to processing", "error", err)
+	}
 
 	// Get provider
 	provider, ok := d.providers[n.Channel]
 	if !ok {
 		logger.Error("no provider for channel", "channel", n.Channel)
-		d.repo.UpdateStatus(ctx, n.ID, domain.StatusFailed, fmt.Sprintf("no provider for channel: %s", n.Channel))
-		d.consumer.Ack(ctx, msg.StreamID, msg.MessageID)
+		if err := d.repo.UpdateStatus(ctx, n.ID, domain.StatusFailed, fmt.Sprintf("no provider for channel: %s", n.Channel)); err != nil {
+			logger.Error("failed to update status to failed", "error", err)
+		}
+		if err := d.consumer.Ack(ctx, msg.StreamID, msg.MessageID); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
@@ -164,7 +176,9 @@ func (d *Dispatcher) processMessage(ctx context.Context, logger *slog.Logger, ms
 	notificationDuration.WithLabelValues(string(n.Channel)).Observe(duration)
 
 	// Record attempt
-	d.repo.IncrementAttempt(ctx, n.ID)
+	if err := d.repo.IncrementAttempt(ctx, n.ID); err != nil {
+		logger.Error("failed to increment attempt", "error", err)
+	}
 	attempt := &domain.DeliveryAttempt{
 		NotificationID: n.ID,
 		AttemptNumber:  n.AttemptCount + 1,
@@ -175,12 +189,18 @@ func (d *Dispatcher) processMessage(ctx context.Context, logger *slog.Logger, ms
 	if result.Error != nil {
 		attempt.Error = result.Error.Error()
 	}
-	d.repo.CreateDeliveryAttempt(ctx, attempt)
+	if err := d.repo.CreateDeliveryAttempt(ctx, attempt); err != nil {
+		logger.Error("failed to create delivery attempt", "error", err)
+	}
 
 	if result.Error == nil {
 		// Success
-		d.repo.UpdateStatus(ctx, n.ID, domain.StatusDelivered, "")
-		d.consumer.Ack(ctx, msg.StreamID, msg.MessageID)
+		if err := d.repo.UpdateStatus(ctx, n.ID, domain.StatusDelivered, ""); err != nil {
+			logger.Error("failed to update status to delivered", "error", err)
+		}
+		if err := d.consumer.Ack(ctx, msg.StreamID, msg.MessageID); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		notificationsProcessed.WithLabelValues(string(n.Channel), "delivered").Inc()
 
 		// Broadcast via WebSocket
@@ -195,21 +215,31 @@ func (d *Dispatcher) processMessage(ctx context.Context, logger *slog.Logger, ms
 		if delivery.ShouldRetry(n.AttemptCount+1, n.MaxRetries) {
 			// Schedule retry
 			retryAt := delivery.RetryAt(n.AttemptCount + 1)
-			d.repo.UpdateStatus(ctx, n.ID, domain.StatusQueued, errMsg)
-			d.producer.EnqueueDelayed(ctx, n.ID, n.Channel, n.Priority, float64(retryAt.UnixMilli()))
+			if err := d.repo.UpdateStatus(ctx, n.ID, domain.StatusQueued, errMsg); err != nil {
+				logger.Error("failed to update status to queued", "error", err)
+			}
+			if err := d.producer.EnqueueDelayed(ctx, n.ID, n.Channel, n.Priority, float64(retryAt.UnixMilli())); err != nil {
+				logger.Error("failed to enqueue delayed notification", "error", err)
+			}
 			retryCount.Inc()
 
 			d.wsHub.Broadcast(n.ID, fmt.Sprintf("retry_scheduled:%s", retryAt.Format(time.RFC3339)))
 		} else {
 			// Max retries exhausted → DLQ
-			d.repo.UpdateStatus(ctx, n.ID, domain.StatusFailed, errMsg)
-			d.dlq.Push(ctx, n.ID, string(n.Channel), errMsg)
+			if err := d.repo.UpdateStatus(ctx, n.ID, domain.StatusFailed, errMsg); err != nil {
+				logger.Error("failed to update status to failed", "error", err)
+			}
+			if err := d.dlq.Push(ctx, n.ID, string(n.Channel), errMsg); err != nil {
+				logger.Error("failed to push to DLQ", "error", err)
+			}
 			dlqCount.Inc()
 			notificationsProcessed.WithLabelValues(string(n.Channel), "failed").Inc()
 
 			d.wsHub.Broadcast(n.ID, "failed")
 		}
-		d.consumer.Ack(ctx, msg.StreamID, msg.MessageID)
+		if err := d.consumer.Ack(ctx, msg.StreamID, msg.MessageID); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 	}
 }
 
