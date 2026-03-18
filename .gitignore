@@ -4,4 +4,4 @@ bin/
 *.out
 .env
 vendor/
-*flow.md
+flow.md
